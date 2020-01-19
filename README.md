@@ -1,4 +1,4 @@
-# DISCOVERY CHANNEL - Account Reports
+# DISCOVERY CHANNEL - Accounting Reports
 ## [QSdoBrasil](https://qsdobrasil.com/)
  
  SQL Server Reporting Services reports
