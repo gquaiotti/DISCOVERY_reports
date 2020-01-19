@@ -1,0 +1,1335 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Report MustUnderstand="df" xmlns="http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition" xmlns:rd="http://schemas.microsoft.com/SQLServer/reporting/reportdesigner" xmlns:df="http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition/defaultfontfamily">
+  <df:DefaultFontFamily>Segoe UI</df:DefaultFontFamily>
+  <AutoRefresh>0</AutoRefresh>
+  <DataSources>
+    <DataSource Name="PROTHEUS">
+      <DataSourceReference>PROTHEUS</DataSourceReference>
+      <rd:SecurityType>None</rd:SecurityType>
+      <rd:DataSourceID>d9e81aac-7b72-4975-b22a-de52d7d72ec1</rd:DataSourceID>
+    </DataSource>
+  </DataSources>
+  <DataSets>
+    <DataSet Name="balance_sheet_ds">
+      <Query>
+        <DataSourceName>PROTHEUS</DataSourceName>
+        <QueryParameters>
+          <QueryParameter Name="@p_d_saldo_anterior_de">
+            <Value>=Parameters!p_d_saldo_anterior_de.Value</Value>
+          </QueryParameter>
+          <QueryParameter Name="@p_d_data_de">
+            <Value>=Parameters!p_d_data_de.Value</Value>
+          </QueryParameter>
+          <QueryParameter Name="@p_d_data_ate">
+            <Value>=Parameters!p_d_data_ate.Value</Value>
+          </QueryParameter>
+          <QueryParameter Name="@p_n_grupo">
+            <Value>=Parameters!p_n_grupo.Value</Value>
+          </QueryParameter>
+          <QueryParameter Name="@p_n_moeda">
+            <Value>=Parameters!p_n_moeda.Value</Value>
+          </QueryParameter>
+        </QueryParameters>
+        <CommandText>begin
+
+	-- Parametros do relatorio
+	--declare @p_d_data_de date = '2019-11-01'
+	--declare @p_d_data_ate date = '2019-12-31'
+	--declare @p_d_saldo_anterior_de date = '2019-10-15'
+
+	-- Serie para periodo
+	-- Todos os meses do periodo, mesmo que nao exista saldo ou lancamento
+	declare @t_perido 
+	  table (id int,
+	         n_ano int,
+	         n_mes int,
+			 d_data_de date,
+			 d_data_ate date)
+
+	-- Tabela de resultado
+	declare @t_balance
+	  table (id_periodo int,
+			 n_ano int,
+			 n_mes int,
+			 d_data_de date,
+			 d_data_ate date,
+			 id_conta_contabil int,
+			 c_conta_contabil varchar(30),
+			 c_conta_descricao varchar(60),
+			 c_condicao varchar(1),
+			 id_grupo_contabil int,
+			 c_grupo_contabil varchar(8),
+			 c_descricao varchar(60),
+			 c_centro_custo varchar(9),
+			 c_descricao_cc varchar(40),
+			 n_saldo_final_anterior float,
+			 n_saldo_lancto float,
+			 n_saldo_final float)
+
+	--
+	declare @v_d_saldo_anterior_de date
+	
+	if datefromparts(year(@p_d_saldo_anterior_de), month(@p_d_saldo_anterior_de), 1) &lt; datefromparts(year(@p_d_data_de), month(@p_d_data_de), 1)
+		set @v_d_saldo_anterior_de = datefromparts(year(@p_d_saldo_anterior_de), month(@p_d_saldo_anterior_de), 1)
+	else
+		set @v_d_saldo_anterior_de = datefromparts(year(@p_d_data_de), month(@p_d_data_de), 1)
+
+	--
+	-- Geracao da serie temporal
+	--
+	declare @v_n_id int = 1
+	declare @v_n_ano int
+	declare @v_n_mes int
+
+	set @v_n_ano = year(@p_d_data_de)
+	set @v_n_mes = month(@p_d_data_de)
+
+	while (@v_n_ano &lt; year(@p_d_data_ate) or (@v_n_ano = year(@p_d_data_ate) and @v_n_mes &lt;= month(@p_d_data_ate)))
+	begin
+		insert into @t_perido (id, n_ano, n_mes, d_data_de) values (@v_n_id, @v_n_ano, @v_n_mes, DATEFROMPARTS(@v_n_ano, @v_n_mes, 1))
+
+		update @t_perido
+		   set d_data_ate = DATEADD(DAY, -1, DATEADD(MONTH, 1, d_data_de))
+
+		if @v_n_mes &lt; 12
+			set @v_n_mes += 1
+		else
+		begin
+			set @v_n_mes = 1
+			set @v_n_ano += 1
+		end
+		
+		set @v_n_id += 1
+	end
+
+	-- Contempla todas as contas que tenham saldo
+	insert into @t_balance 
+		(id_periodo,
+		 n_ano, 
+		 n_mes, 
+		 d_data_de,
+		 d_data_ate,
+		 id_conta_contabil,
+		 c_conta_contabil,
+		 c_conta_descricao,
+		 c_condicao,
+		 id_grupo_contabil,
+		 c_grupo_contabil, 
+		 c_descricao)
+	select p.id as id_periodo,
+		   p.n_ano as n_ano,
+	       p.n_mes as n_mes,
+		   p.d_data_de,
+		   p.d_data_ate,
+		   l.id_conta_contabil,
+		   l.c_conta_contabil as c_conta_contabil,
+		   cc.c_descricao as c_conta_descricao,
+		   left(cc.c_condicao, 1) as c_condicao,
+		   cc.id_grupo_contabil,
+		   cc.c_grupo as c_grupo_contabil,
+		   g.c_descricao as c_descricao
+	  from bi_ctb_saldo_conta_mes_vw l
+	  join bi_ctb_conta_contabil_vw cc
+	    on cc.id = l.id_conta_contabil
+	  left join bi_ctb_grupo_contabil_vw g
+	    on g.id = cc.id_grupo_contabil
+	  join @t_perido p
+	    on 1=1
+	 where cc.id_grupo_contabil in (@p_n_grupo)
+	   and (left(l.c_conta_contabil, 1) = '1' or left(l.c_conta_contabil, 1) = '2')
+	   and l.id_moeda in (@p_n_moeda)
+	 group by  p.id,
+	           p.n_ano,
+			   p.n_mes,
+			   p.d_data_de,
+			   p.d_data_ate,
+			   l.id_conta_contabil,
+			   l.c_conta_contabil,
+			   cc.c_descricao,
+			   left(cc.c_condicao, 1),
+			   cc.id_grupo_contabil,
+			   cc.c_grupo,
+			   g.c_descricao
+	order by c_grupo,
+	         c_conta_contabil,
+	         n_ano, 
+	         n_mes
+
+	-- Ultimo saldo anterior disponivel na base antes da data inicial
+	-- Somente para o primeiro periodo
+	UPDATE s
+	   SET n_saldo_final_anterior = (SELECT SUM(sc.n_saldo)
+										FROM bi_ctb_saldo_conta_mes_vw sc
+									   WHERE sc.c_conta_contabil = s.c_conta_contabil
+										 AND sc.d_data &lt; s.d_data_de
+										 AND sc.d_data &gt;= @v_d_saldo_anterior_de
+										 AND sc.id_moeda in (@p_n_moeda))
+      FROM @t_balance s
+	 WHERE s.id_periodo = 1
+
+	-- Saldo final calculado
+	UPDATE s
+	   SET n_saldo_lancto = (SELECT SUM(sc.n_saldo)
+								FROM bi_ctb_saldo_conta_mes_vw sc
+								WHERE sc.c_conta_contabil = s.c_conta_contabil
+								  AND sc.d_data between s.d_data_de and s.d_data_ate
+								  AND sc.id_moeda in (@p_n_moeda))
+      FROM @t_balance s
+
+	-- Saldo final calculado
+	UPDATE s
+	   SET n_saldo_final = (SELECT SUM(sc.n_saldo)
+								FROM bi_ctb_saldo_conta_mes_vw sc
+								WHERE sc.c_conta_contabil = s.c_conta_contabil
+									AND sc.d_data &lt;= s.d_data_ate
+									AND sc.d_data &gt;= @v_d_saldo_anterior_de
+									AND sc.id_moeda in (@p_n_moeda))
+      FROM @t_balance s
+
+	SELECT n_ano, 
+	       n_mes, 
+		   d_data_de,
+		   d_data_ate,
+		   id_conta_contabil,
+		   c_conta_contabil,
+		   c_conta_descricao,
+		   id_grupo_contabil,
+		   c_grupo_contabil, 
+		   c_descricao, 
+		   SUM(n_saldo_final_anterior) as n_saldo_final_anterior,
+		   SUM(n_saldo_lancto) as n_saldo_lancto,
+		   SUM(n_saldo_final) as n_saldo_final
+	  FROM @t_balance 
+	 GROUP BY n_ano, 
+	          n_mes, 
+			  d_data_de,
+			  d_data_ate,
+			  id_conta_contabil,
+			  c_conta_contabil,
+			  c_conta_descricao,
+			  id_grupo_contabil,
+		      c_grupo_contabil, 
+		      c_descricao
+	 ORDER BY c_grupo_contabil, 
+			  n_ano, 
+	          n_mes
+end</CommandText>
+      </Query>
+      <Fields>
+        <Field Name="n_ano">
+          <DataField>n_ano</DataField>
+          <rd:TypeName>System.Int32</rd:TypeName>
+        </Field>
+        <Field Name="n_mes">
+          <DataField>n_mes</DataField>
+          <rd:TypeName>System.Int32</rd:TypeName>
+        </Field>
+        <Field Name="d_data_de">
+          <DataField>d_data_de</DataField>
+          <rd:TypeName>System.DateTime</rd:TypeName>
+        </Field>
+        <Field Name="c_conta_contabil">
+          <DataField>c_conta_contabil</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="d_data_ate">
+          <DataField>d_data_ate</DataField>
+          <rd:TypeName>System.DateTime</rd:TypeName>
+        </Field>
+        <Field Name="c_grupo_contabil">
+          <DataField>c_grupo_contabil</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="id_conta_contabil">
+          <DataField>id_conta_contabil</DataField>
+          <rd:TypeName>System.Int32</rd:TypeName>
+        </Field>
+        <Field Name="c_conta_descricao">
+          <DataField>c_conta_descricao</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="c_descricao">
+          <DataField>c_descricao</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="n_saldo_final_anterior">
+          <DataField>n_saldo_final_anterior</DataField>
+          <rd:TypeName>System.Double</rd:TypeName>
+        </Field>
+        <Field Name="id_grupo_contabil">
+          <DataField>id_grupo_contabil</DataField>
+          <rd:TypeName>System.Int32</rd:TypeName>
+        </Field>
+        <Field Name="n_saldo_lancto">
+          <DataField>n_saldo_lancto</DataField>
+          <rd:TypeName>System.Double</rd:TypeName>
+        </Field>
+        <Field Name="n_saldo_final">
+          <DataField>n_saldo_final</DataField>
+          <rd:TypeName>System.Double</rd:TypeName>
+        </Field>
+      </Fields>
+    </DataSet>
+    <DataSet Name="grupo_contabil_ds">
+      <SharedDataSet>
+        <SharedDataSetReference>grupo_contabil_ds</SharedDataSetReference>
+      </SharedDataSet>
+      <Fields>
+        <Field Name="c_grupo_contabil">
+          <DataField>c_grupo_contabil</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="c_descricao">
+          <DataField>c_descricao</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="id">
+          <DataField>id</DataField>
+          <rd:TypeName>System.Int64</rd:TypeName>
+        </Field>
+      </Fields>
+    </DataSet>
+    <DataSet Name="moeda_ds">
+      <SharedDataSet>
+        <SharedDataSetReference>moeda_ds</SharedDataSetReference>
+      </SharedDataSet>
+      <Fields>
+        <Field Name="c_moeda">
+          <DataField>c_moeda</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="c_descricao">
+          <DataField>c_descricao</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="id">
+          <DataField>id</DataField>
+          <rd:TypeName>System.Int64</rd:TypeName>
+        </Field>
+      </Fields>
+    </DataSet>
+  </DataSets>
+  <ReportSections>
+    <ReportSection>
+      <Body>
+        <ReportItems>
+          <Tablix Name="Tablix1">
+            <TablixCorner>
+              <TablixCornerRows>
+                <TablixCornerRow>
+                  <TablixCornerCell>
+                    <CellContents>
+                      <Textbox Name="Textbox4">
+                        <CanGrow>true</CanGrow>
+                        <KeepTogether>true</KeepTogether>
+                        <Paragraphs>
+                          <Paragraph>
+                            <TextRuns>
+                              <TextRun>
+                                <Value>Prior Account</Value>
+                                <Style>
+                                  <FontFamily>segoe ui</FontFamily>
+                                  <FontSize>8pt</FontSize>
+                                  <FontWeight>Bold</FontWeight>
+                                  <Color>White</Color>
+                                </Style>
+                              </TextRun>
+                            </TextRuns>
+                            <Style />
+                          </Paragraph>
+                        </Paragraphs>
+                        <rd:DefaultName>Textbox4</rd:DefaultName>
+                        <Style>
+                          <Border>
+                            <Style>None</Style>
+                          </Border>
+                          <BackgroundColor>SteelBlue</BackgroundColor>
+                          <PaddingLeft>2pt</PaddingLeft>
+                          <PaddingRight>2pt</PaddingRight>
+                          <PaddingTop>2pt</PaddingTop>
+                          <PaddingBottom>2pt</PaddingBottom>
+                        </Style>
+                      </Textbox>
+                    </CellContents>
+                  </TablixCornerCell>
+                  <TablixCornerCell>
+                    <CellContents>
+                      <Textbox Name="Textbox1">
+                        <CanGrow>true</CanGrow>
+                        <KeepTogether>true</KeepTogether>
+                        <Paragraphs>
+                          <Paragraph>
+                            <TextRuns>
+                              <TextRun>
+                                <Value>Description</Value>
+                                <Style>
+                                  <FontFamily>segoe ui</FontFamily>
+                                  <FontSize>8pt</FontSize>
+                                  <FontWeight>Bold</FontWeight>
+                                  <Color>White</Color>
+                                </Style>
+                              </TextRun>
+                            </TextRuns>
+                            <Style />
+                          </Paragraph>
+                        </Paragraphs>
+                        <rd:DefaultName>Textbox1</rd:DefaultName>
+                        <Style>
+                          <Border>
+                            <Style>None</Style>
+                          </Border>
+                          <BackgroundColor>SteelBlue</BackgroundColor>
+                          <PaddingLeft>2pt</PaddingLeft>
+                          <PaddingRight>2pt</PaddingRight>
+                          <PaddingTop>2pt</PaddingTop>
+                          <PaddingBottom>2pt</PaddingBottom>
+                        </Style>
+                      </Textbox>
+                    </CellContents>
+                  </TablixCornerCell>
+                  <TablixCornerCell>
+                    <CellContents>
+                      <Textbox Name="Textbox10">
+                        <CanGrow>true</CanGrow>
+                        <KeepTogether>true</KeepTogether>
+                        <Paragraphs>
+                          <Paragraph>
+                            <TextRuns>
+                              <TextRun>
+                                <Value>Discovery Account</Value>
+                                <Style>
+                                  <FontFamily>segoe ui</FontFamily>
+                                  <FontSize>8pt</FontSize>
+                                  <FontWeight>Bold</FontWeight>
+                                  <Color>White</Color>
+                                </Style>
+                              </TextRun>
+                            </TextRuns>
+                            <Style />
+                          </Paragraph>
+                        </Paragraphs>
+                        <rd:DefaultName>Textbox10</rd:DefaultName>
+                        <Style>
+                          <Border>
+                            <Style>None</Style>
+                          </Border>
+                          <BackgroundColor>SteelBlue</BackgroundColor>
+                          <PaddingLeft>2pt</PaddingLeft>
+                          <PaddingRight>2pt</PaddingRight>
+                          <PaddingTop>2pt</PaddingTop>
+                          <PaddingBottom>2pt</PaddingBottom>
+                        </Style>
+                      </Textbox>
+                    </CellContents>
+                  </TablixCornerCell>
+                  <TablixCornerCell>
+                    <CellContents>
+                      <Textbox Name="Textbox11">
+                        <CanGrow>true</CanGrow>
+                        <KeepTogether>true</KeepTogether>
+                        <Paragraphs>
+                          <Paragraph>
+                            <TextRuns>
+                              <TextRun>
+                                <Value>Description</Value>
+                                <Style>
+                                  <FontFamily>segoe ui</FontFamily>
+                                  <FontSize>8pt</FontSize>
+                                  <FontWeight>Bold</FontWeight>
+                                  <Color>White</Color>
+                                </Style>
+                              </TextRun>
+                            </TextRuns>
+                            <Style />
+                          </Paragraph>
+                        </Paragraphs>
+                        <rd:DefaultName>Textbox11</rd:DefaultName>
+                        <Style>
+                          <Border>
+                            <Style>None</Style>
+                          </Border>
+                          <BackgroundColor>SteelBlue</BackgroundColor>
+                          <PaddingLeft>2pt</PaddingLeft>
+                          <PaddingRight>2pt</PaddingRight>
+                          <PaddingTop>2pt</PaddingTop>
+                          <PaddingBottom>2pt</PaddingBottom>
+                        </Style>
+                      </Textbox>
+                    </CellContents>
+                  </TablixCornerCell>
+                  <TablixCornerCell>
+                    <CellContents>
+                      <Textbox Name="Textbox12">
+                        <CanGrow>true</CanGrow>
+                        <KeepTogether>true</KeepTogether>
+                        <Paragraphs>
+                          <Paragraph>
+                            <TextRuns>
+                              <TextRun>
+                                <Value>Previous End</Value>
+                                <Style>
+                                  <FontFamily>segoe ui</FontFamily>
+                                  <FontSize>8pt</FontSize>
+                                  <FontWeight>Bold</FontWeight>
+                                  <Color>White</Color>
+                                </Style>
+                              </TextRun>
+                            </TextRuns>
+                            <Style />
+                          </Paragraph>
+                        </Paragraphs>
+                        <rd:DefaultName>Textbox12</rd:DefaultName>
+                        <Style>
+                          <Border>
+                            <Style>None</Style>
+                          </Border>
+                          <BackgroundColor>SteelBlue</BackgroundColor>
+                          <PaddingLeft>2pt</PaddingLeft>
+                          <PaddingRight>2pt</PaddingRight>
+                          <PaddingTop>2pt</PaddingTop>
+                          <PaddingBottom>2pt</PaddingBottom>
+                        </Style>
+                      </Textbox>
+                    </CellContents>
+                  </TablixCornerCell>
+                </TablixCornerRow>
+              </TablixCornerRows>
+            </TablixCorner>
+            <TablixBody>
+              <TablixColumns>
+                <TablixColumn>
+                  <Width>3cm</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>3cm</Width>
+                </TablixColumn>
+              </TablixColumns>
+              <TablixRows>
+                <TablixRow>
+                  <Height>0.6cm</Height>
+                  <TablixCells>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="n_saldo_lancto">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Sum(Fields!n_saldo_lancto.Value)</Value>
+                                  <Style>
+                                    <FontFamily>segoe ui</FontFamily>
+                                    <FontSize>8pt</FontSize>
+                                    <Format>#,0.00;(#,0.00)</Format>
+                                    <Color>=IIf(Me.Value &gt;= 0, "Black", "Brown")</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Right</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>n_saldo_lancto</rd:DefaultName>
+                          <ActionInfo>
+                            <Actions>
+                              <Action>
+                                <Drillthrough>
+                                  <ReportName>Upload</ReportName>
+                                  <Parameters>
+                                    <Parameter Name="p_d_data_de">
+                                      <Value>=Fields!d_data_de.Value</Value>
+                                    </Parameter>
+                                    <Parameter Name="p_d_data_ate">
+                                      <Value>=Fields!d_data_ate.Value</Value>
+                                    </Parameter>
+                                    <Parameter Name="p_n_conta_contabil">
+                                      <Value>=Fields!id_conta_contabil.Value</Value>
+                                    </Parameter>
+                                    <Parameter Name="p_n_grupo">
+                                      <Value>=Fields!id_grupo_contabil.Value</Value>
+                                    </Parameter>
+                                    <Parameter Name="p_n_moeda">
+                                      <Value>=Parameters!p_n_moeda.Value</Value>
+                                    </Parameter>
+                                  </Parameters>
+                                </Drillthrough>
+                              </Action>
+                            </Actions>
+                          </ActionInfo>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="n_saldo_final">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Sum(Fields!n_saldo_final.Value)</Value>
+                                  <Style>
+                                    <FontFamily>segoe ui</FontFamily>
+                                    <FontSize>8pt</FontSize>
+                                    <Format>#,0.00;(#,0.00)</Format>
+                                    <Color>=IIf(Me.Value &gt;= 0, "Black", "Brown")</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Right</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>n_saldo_final</rd:DefaultName>
+                          <ActionInfo>
+                            <Actions>
+                              <Action>
+                                <Drillthrough>
+                                  <ReportName>Upload</ReportName>
+                                  <Parameters>
+                                    <Parameter Name="p_d_data_de">
+                                      <Value>=Parameters!p_d_saldo_anterior_de.Value</Value>
+                                    </Parameter>
+                                    <Parameter Name="p_d_data_ate">
+                                      <Value>=Fields!d_data_ate.Value</Value>
+                                    </Parameter>
+                                    <Parameter Name="p_n_grupo">
+                                      <Value>=Fields!id_grupo_contabil.Value</Value>
+                                    </Parameter>
+                                    <Parameter Name="p_n_conta_contabil">
+                                      <Value>=Fields!id_conta_contabil.Value</Value>
+                                    </Parameter>
+                                    <Parameter Name="p_n_moeda">
+                                      <Value>=Parameters!p_n_moeda.Value</Value>
+                                    </Parameter>
+                                  </Parameters>
+                                </Drillthrough>
+                              </Action>
+                            </Actions>
+                          </ActionInfo>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                  </TablixCells>
+                </TablixRow>
+                <TablixRow>
+                  <Height>0.6cm</Height>
+                  <TablixCells>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox20">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Sum(Fields!n_saldo_lancto.Value)</Value>
+                                  <Style>
+                                    <FontFamily>segoe ui</FontFamily>
+                                    <FontSize>8pt</FontSize>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Format>#,0.00;(#,0.00)</Format>
+                                    <Color>=IIf(Me.Value &gt;= 0, "Black", "Brown")</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Right</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox20</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox21">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Sum(Fields!n_saldo_final.Value)</Value>
+                                  <Style>
+                                    <FontFamily>segoe ui</FontFamily>
+                                    <FontSize>8pt</FontSize>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Format>#,0.00;(#,0.00)</Format>
+                                    <Color>=IIf(Me.Value &gt;= 0, "Black", "Brown")</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Right</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox21</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                  </TablixCells>
+                </TablixRow>
+              </TablixRows>
+            </TablixBody>
+            <TablixColumnHierarchy>
+              <TablixMembers>
+                <TablixMember>
+                  <Group Name="n_mes">
+                    <GroupExpressions>
+                      <GroupExpression>=Fields!n_ano.Value</GroupExpression>
+                      <GroupExpression>=Fields!n_mes.Value</GroupExpression>
+                    </GroupExpressions>
+                  </Group>
+                  <SortExpressions>
+                    <SortExpression>
+                      <Value>=Fields!n_ano.Value</Value>
+                    </SortExpression>
+                    <SortExpression>
+                      <Value>=Fields!n_mes.Value</Value>
+                    </SortExpression>
+                  </SortExpressions>
+                  <TablixMembers>
+                    <TablixMember>
+                      <TablixHeader>
+                        <Size>0.6cm</Size>
+                        <CellContents>
+                          <Textbox Name="Textbox13">
+                            <CanGrow>true</CanGrow>
+                            <KeepTogether>true</KeepTogether>
+                            <Paragraphs>
+                              <Paragraph>
+                                <TextRuns>
+                                  <TextRun>
+                                    <Value>=MonthName(Fields!n_mes.Value, True) + " " + Trim(Str(Fields!n_ano.Value)) + " Activities"</Value>
+                                    <Style>
+                                      <FontFamily>segoe ui</FontFamily>
+                                      <FontSize>8pt</FontSize>
+                                      <FontWeight>Bold</FontWeight>
+                                      <Color>White</Color>
+                                    </Style>
+                                  </TextRun>
+                                </TextRuns>
+                                <Style />
+                              </Paragraph>
+                            </Paragraphs>
+                            <rd:DefaultName>Textbox13</rd:DefaultName>
+                            <Style>
+                              <Border>
+                                <Style>None</Style>
+                              </Border>
+                              <BackgroundColor>SteelBlue</BackgroundColor>
+                              <PaddingLeft>2pt</PaddingLeft>
+                              <PaddingRight>2pt</PaddingRight>
+                              <PaddingTop>2pt</PaddingTop>
+                              <PaddingBottom>2pt</PaddingBottom>
+                            </Style>
+                          </Textbox>
+                        </CellContents>
+                      </TablixHeader>
+                      <TablixMembers>
+                        <TablixMember />
+                      </TablixMembers>
+                    </TablixMember>
+                    <TablixMember>
+                      <TablixHeader>
+                        <Size>0.6cm</Size>
+                        <CellContents>
+                          <Textbox Name="Textbox16">
+                            <CanGrow>true</CanGrow>
+                            <KeepTogether>true</KeepTogether>
+                            <Paragraphs>
+                              <Paragraph>
+                                <TextRuns>
+                                  <TextRun>
+                                    <Value>= "End of " + MonthName(Fields!n_mes.Value, True) + " " + Trim(Str(Fields!n_ano.Value))</Value>
+                                    <Style>
+                                      <FontFamily>segoe ui</FontFamily>
+                                      <FontSize>8pt</FontSize>
+                                      <FontWeight>Bold</FontWeight>
+                                      <Color>White</Color>
+                                    </Style>
+                                  </TextRun>
+                                </TextRuns>
+                                <Style />
+                              </Paragraph>
+                            </Paragraphs>
+                            <rd:DefaultName>Textbox16</rd:DefaultName>
+                            <Style>
+                              <Border>
+                                <Style>None</Style>
+                              </Border>
+                              <BackgroundColor>SteelBlue</BackgroundColor>
+                              <PaddingLeft>2pt</PaddingLeft>
+                              <PaddingRight>2pt</PaddingRight>
+                              <PaddingTop>2pt</PaddingTop>
+                              <PaddingBottom>2pt</PaddingBottom>
+                            </Style>
+                          </Textbox>
+                        </CellContents>
+                      </TablixHeader>
+                      <TablixMembers>
+                        <TablixMember />
+                      </TablixMembers>
+                    </TablixMember>
+                  </TablixMembers>
+                </TablixMember>
+              </TablixMembers>
+            </TablixColumnHierarchy>
+            <TablixRowHierarchy>
+              <TablixMembers>
+                <TablixMember>
+                  <Group Name="c_conta_contabil">
+                    <GroupExpressions>
+                      <GroupExpression>=Fields!c_conta_contabil.Value</GroupExpression>
+                    </GroupExpressions>
+                  </Group>
+                  <SortExpressions>
+                    <SortExpression>
+                      <Value>=Fields!c_conta_contabil.Value</Value>
+                    </SortExpression>
+                  </SortExpressions>
+                  <TablixMembers>
+                    <TablixMember>
+                      <TablixHeader>
+                        <Size>3.5cm</Size>
+                        <CellContents>
+                          <Textbox Name="c_conta_contabil">
+                            <CanGrow>true</CanGrow>
+                            <KeepTogether>true</KeepTogether>
+                            <Paragraphs>
+                              <Paragraph>
+                                <TextRuns>
+                                  <TextRun>
+                                    <Value>=Fields!c_conta_contabil.Value</Value>
+                                    <Style>
+                                      <FontFamily>segoe ui</FontFamily>
+                                      <FontSize>8pt</FontSize>
+                                    </Style>
+                                  </TextRun>
+                                </TextRuns>
+                                <Style />
+                              </Paragraph>
+                            </Paragraphs>
+                            <rd:DefaultName>c_conta_contabil</rd:DefaultName>
+                            <Style>
+                              <Border>
+                                <Color>LightGrey</Color>
+                                <Style>Solid</Style>
+                              </Border>
+                              <PaddingLeft>2pt</PaddingLeft>
+                              <PaddingRight>2pt</PaddingRight>
+                              <PaddingTop>2pt</PaddingTop>
+                              <PaddingBottom>2pt</PaddingBottom>
+                            </Style>
+                          </Textbox>
+                        </CellContents>
+                      </TablixHeader>
+                      <TablixMembers>
+                        <TablixMember>
+                          <TablixHeader>
+                            <Size>7.5cm</Size>
+                            <CellContents>
+                              <Textbox Name="c_conta_descricao">
+                                <CanGrow>true</CanGrow>
+                                <KeepTogether>true</KeepTogether>
+                                <Paragraphs>
+                                  <Paragraph>
+                                    <TextRuns>
+                                      <TextRun>
+                                        <Value>=Fields!c_conta_descricao.Value</Value>
+                                        <Style>
+                                          <FontFamily>segoe ui</FontFamily>
+                                          <FontSize>8pt</FontSize>
+                                        </Style>
+                                      </TextRun>
+                                    </TextRuns>
+                                    <Style />
+                                  </Paragraph>
+                                </Paragraphs>
+                                <rd:DefaultName>c_conta_descricao</rd:DefaultName>
+                                <Style>
+                                  <Border>
+                                    <Color>LightGrey</Color>
+                                    <Style>Solid</Style>
+                                  </Border>
+                                  <PaddingLeft>2pt</PaddingLeft>
+                                  <PaddingRight>2pt</PaddingRight>
+                                  <PaddingTop>2pt</PaddingTop>
+                                  <PaddingBottom>2pt</PaddingBottom>
+                                </Style>
+                              </Textbox>
+                            </CellContents>
+                          </TablixHeader>
+                          <TablixMembers>
+                            <TablixMember>
+                              <TablixHeader>
+                                <Size>3.5cm</Size>
+                                <CellContents>
+                                  <Textbox Name="c_grupo_contabil">
+                                    <CanGrow>true</CanGrow>
+                                    <KeepTogether>true</KeepTogether>
+                                    <Paragraphs>
+                                      <Paragraph>
+                                        <TextRuns>
+                                          <TextRun>
+                                            <Value>=Fields!c_grupo_contabil.Value</Value>
+                                            <Style>
+                                              <FontFamily>segoe ui</FontFamily>
+                                              <FontSize>8pt</FontSize>
+                                            </Style>
+                                          </TextRun>
+                                        </TextRuns>
+                                        <Style />
+                                      </Paragraph>
+                                    </Paragraphs>
+                                    <rd:DefaultName>c_grupo_contabil</rd:DefaultName>
+                                    <Style>
+                                      <Border>
+                                        <Color>LightGrey</Color>
+                                        <Style>Solid</Style>
+                                      </Border>
+                                      <PaddingLeft>2pt</PaddingLeft>
+                                      <PaddingRight>2pt</PaddingRight>
+                                      <PaddingTop>2pt</PaddingTop>
+                                      <PaddingBottom>2pt</PaddingBottom>
+                                    </Style>
+                                  </Textbox>
+                                </CellContents>
+                              </TablixHeader>
+                              <TablixMembers>
+                                <TablixMember>
+                                  <TablixHeader>
+                                    <Size>7.5cm</Size>
+                                    <CellContents>
+                                      <Textbox Name="c_descricao">
+                                        <CanGrow>true</CanGrow>
+                                        <KeepTogether>true</KeepTogether>
+                                        <Paragraphs>
+                                          <Paragraph>
+                                            <TextRuns>
+                                              <TextRun>
+                                                <Value>=Fields!c_descricao.Value</Value>
+                                                <Style>
+                                                  <FontFamily>segoe ui</FontFamily>
+                                                  <FontSize>8pt</FontSize>
+                                                </Style>
+                                              </TextRun>
+                                            </TextRuns>
+                                            <Style />
+                                          </Paragraph>
+                                        </Paragraphs>
+                                        <rd:DefaultName>c_descricao</rd:DefaultName>
+                                        <Style>
+                                          <Border>
+                                            <Color>LightGrey</Color>
+                                            <Style>Solid</Style>
+                                          </Border>
+                                          <PaddingLeft>2pt</PaddingLeft>
+                                          <PaddingRight>2pt</PaddingRight>
+                                          <PaddingTop>2pt</PaddingTop>
+                                          <PaddingBottom>2pt</PaddingBottom>
+                                        </Style>
+                                      </Textbox>
+                                    </CellContents>
+                                  </TablixHeader>
+                                  <TablixMembers>
+                                    <TablixMember>
+                                      <TablixHeader>
+                                        <Size>3cm</Size>
+                                        <CellContents>
+                                          <Textbox Name="n_saldo_final_anterior">
+                                            <CanGrow>true</CanGrow>
+                                            <KeepTogether>true</KeepTogether>
+                                            <Paragraphs>
+                                              <Paragraph>
+                                                <TextRuns>
+                                                  <TextRun>
+                                                    <Value>=Sum(Fields!n_saldo_final_anterior.Value)</Value>
+                                                    <Style>
+                                                      <FontFamily>segoe ui</FontFamily>
+                                                      <FontSize>8pt</FontSize>
+                                                      <Format>#,0.00;(#,0.00)</Format>
+                                                      <Color>=IIf(Me.Value &gt;= 0, "Black", "Brown")</Color>
+                                                    </Style>
+                                                  </TextRun>
+                                                </TextRuns>
+                                                <Style />
+                                              </Paragraph>
+                                            </Paragraphs>
+                                            <rd:DefaultName>n_saldo_final_anterior</rd:DefaultName>
+                                            <Style>
+                                              <Border>
+                                                <Color>LightGrey</Color>
+                                                <Style>Solid</Style>
+                                              </Border>
+                                              <PaddingLeft>2pt</PaddingLeft>
+                                              <PaddingRight>2pt</PaddingRight>
+                                              <PaddingTop>2pt</PaddingTop>
+                                              <PaddingBottom>2pt</PaddingBottom>
+                                            </Style>
+                                          </Textbox>
+                                        </CellContents>
+                                      </TablixHeader>
+                                    </TablixMember>
+                                  </TablixMembers>
+                                </TablixMember>
+                              </TablixMembers>
+                            </TablixMember>
+                          </TablixMembers>
+                        </TablixMember>
+                      </TablixMembers>
+                    </TablixMember>
+                  </TablixMembers>
+                </TablixMember>
+                <TablixMember>
+                  <TablixHeader>
+                    <Size>3.5cm</Size>
+                    <CellContents>
+                      <Textbox Name="Textbox18">
+                        <CanGrow>true</CanGrow>
+                        <KeepTogether>true</KeepTogether>
+                        <Paragraphs>
+                          <Paragraph>
+                            <TextRuns>
+                              <TextRun>
+                                <Value>Total</Value>
+                                <Style>
+                                  <FontFamily>segoe ui</FontFamily>
+                                  <FontSize>8pt</FontSize>
+                                  <FontWeight>Bold</FontWeight>
+                                </Style>
+                              </TextRun>
+                            </TextRuns>
+                            <Style />
+                          </Paragraph>
+                        </Paragraphs>
+                        <rd:DefaultName>Textbox17</rd:DefaultName>
+                        <Style>
+                          <Border>
+                            <Color>LightGrey</Color>
+                            <Style>Solid</Style>
+                          </Border>
+                          <PaddingLeft>2pt</PaddingLeft>
+                          <PaddingRight>2pt</PaddingRight>
+                          <PaddingTop>2pt</PaddingTop>
+                          <PaddingBottom>2pt</PaddingBottom>
+                        </Style>
+                      </Textbox>
+                    </CellContents>
+                  </TablixHeader>
+                  <TablixMembers>
+                    <TablixMember>
+                      <TablixHeader>
+                        <Size>7.5cm</Size>
+                        <CellContents>
+                          <Textbox Name="Textbox3">
+                            <CanGrow>true</CanGrow>
+                            <KeepTogether>true</KeepTogether>
+                            <Paragraphs>
+                              <Paragraph>
+                                <TextRuns>
+                                  <TextRun>
+                                    <Value />
+                                    <Style>
+                                      <FontFamily>segoe ui</FontFamily>
+                                      <FontSize>8pt</FontSize>
+                                      <FontWeight>Bold</FontWeight>
+                                    </Style>
+                                  </TextRun>
+                                </TextRuns>
+                                <Style />
+                              </Paragraph>
+                            </Paragraphs>
+                            <rd:DefaultName>Textbox3</rd:DefaultName>
+                            <Style>
+                              <Border>
+                                <Color>LightGrey</Color>
+                                <Style>Solid</Style>
+                              </Border>
+                              <PaddingLeft>2pt</PaddingLeft>
+                              <PaddingRight>2pt</PaddingRight>
+                              <PaddingTop>2pt</PaddingTop>
+                              <PaddingBottom>2pt</PaddingBottom>
+                            </Style>
+                          </Textbox>
+                        </CellContents>
+                      </TablixHeader>
+                      <TablixMembers>
+                        <TablixMember>
+                          <TablixHeader>
+                            <Size>3.5cm</Size>
+                            <CellContents>
+                              <Textbox Name="Textbox7">
+                                <CanGrow>true</CanGrow>
+                                <KeepTogether>true</KeepTogether>
+                                <Paragraphs>
+                                  <Paragraph>
+                                    <TextRuns>
+                                      <TextRun>
+                                        <Value />
+                                        <Style>
+                                          <FontFamily>segoe ui</FontFamily>
+                                          <FontSize>8pt</FontSize>
+                                          <FontWeight>Bold</FontWeight>
+                                        </Style>
+                                      </TextRun>
+                                    </TextRuns>
+                                    <Style />
+                                  </Paragraph>
+                                </Paragraphs>
+                                <rd:DefaultName>Textbox7</rd:DefaultName>
+                                <Style>
+                                  <Border>
+                                    <Color>LightGrey</Color>
+                                    <Style>Solid</Style>
+                                  </Border>
+                                  <PaddingLeft>2pt</PaddingLeft>
+                                  <PaddingRight>2pt</PaddingRight>
+                                  <PaddingTop>2pt</PaddingTop>
+                                  <PaddingBottom>2pt</PaddingBottom>
+                                </Style>
+                              </Textbox>
+                            </CellContents>
+                          </TablixHeader>
+                          <TablixMembers>
+                            <TablixMember>
+                              <TablixHeader>
+                                <Size>7.5cm</Size>
+                                <CellContents>
+                                  <Textbox Name="Textbox25">
+                                    <CanGrow>true</CanGrow>
+                                    <KeepTogether>true</KeepTogether>
+                                    <Paragraphs>
+                                      <Paragraph>
+                                        <TextRuns>
+                                          <TextRun>
+                                            <Value />
+                                            <Style>
+                                              <FontFamily>segoe ui</FontFamily>
+                                              <FontSize>8pt</FontSize>
+                                            </Style>
+                                          </TextRun>
+                                        </TextRuns>
+                                        <Style />
+                                      </Paragraph>
+                                    </Paragraphs>
+                                    <rd:DefaultName>Textbox25</rd:DefaultName>
+                                    <Style>
+                                      <Border>
+                                        <Color>LightGrey</Color>
+                                        <Style>Solid</Style>
+                                      </Border>
+                                      <PaddingLeft>2pt</PaddingLeft>
+                                      <PaddingRight>2pt</PaddingRight>
+                                      <PaddingTop>2pt</PaddingTop>
+                                      <PaddingBottom>2pt</PaddingBottom>
+                                    </Style>
+                                  </Textbox>
+                                </CellContents>
+                              </TablixHeader>
+                              <TablixMembers>
+                                <TablixMember>
+                                  <TablixHeader>
+                                    <Size>3cm</Size>
+                                    <CellContents>
+                                      <Textbox Name="n_saldo_final_anterior2">
+                                        <CanGrow>true</CanGrow>
+                                        <KeepTogether>true</KeepTogether>
+                                        <Paragraphs>
+                                          <Paragraph>
+                                            <TextRuns>
+                                              <TextRun>
+                                                <Value>=Sum(Fields!n_saldo_final_anterior.Value)</Value>
+                                                <Style>
+                                                  <FontFamily>segoe ui</FontFamily>
+                                                  <FontSize>8pt</FontSize>
+                                                  <FontWeight>Bold</FontWeight>
+                                                  <Format>#,0.00;(#,0.00)</Format>
+                                                  <Color>=IIf(Me.Value &gt;= 0, "Black", "Brown")</Color>
+                                                </Style>
+                                              </TextRun>
+                                            </TextRuns>
+                                            <Style />
+                                          </Paragraph>
+                                        </Paragraphs>
+                                        <rd:DefaultName>n_saldo_final_anterior</rd:DefaultName>
+                                        <Style>
+                                          <Border>
+                                            <Color>LightGrey</Color>
+                                            <Style>Solid</Style>
+                                          </Border>
+                                          <PaddingLeft>2pt</PaddingLeft>
+                                          <PaddingRight>2pt</PaddingRight>
+                                          <PaddingTop>2pt</PaddingTop>
+                                          <PaddingBottom>2pt</PaddingBottom>
+                                        </Style>
+                                      </Textbox>
+                                    </CellContents>
+                                  </TablixHeader>
+                                </TablixMember>
+                              </TablixMembers>
+                            </TablixMember>
+                          </TablixMembers>
+                        </TablixMember>
+                      </TablixMembers>
+                    </TablixMember>
+                  </TablixMembers>
+                  <KeepWithGroup>Before</KeepWithGroup>
+                </TablixMember>
+              </TablixMembers>
+            </TablixRowHierarchy>
+            <RepeatColumnHeaders>true</RepeatColumnHeaders>
+            <RepeatRowHeaders>true</RepeatRowHeaders>
+            <DataSetName>balance_sheet_ds</DataSetName>
+            <Height>1.8cm</Height>
+            <Width>31cm</Width>
+            <Style>
+              <Border>
+                <Style>None</Style>
+              </Border>
+            </Style>
+          </Tablix>
+        </ReportItems>
+        <Height>0.70866in</Height>
+        <Style />
+      </Body>
+      <Width>12.20472in</Width>
+      <Page>
+        <PageHeight>29.7cm</PageHeight>
+        <PageWidth>42cm</PageWidth>
+        <LeftMargin>1cm</LeftMargin>
+        <RightMargin>1cm</RightMargin>
+        <TopMargin>1cm</TopMargin>
+        <BottomMargin>1cm</BottomMargin>
+        <ColumnSpacing>0.13cm</ColumnSpacing>
+        <Style />
+      </Page>
+    </ReportSection>
+  </ReportSections>
+  <ReportParameters>
+    <ReportParameter Name="p_d_data_de">
+      <DataType>DateTime</DataType>
+      <Prompt>Desde a data</Prompt>
+    </ReportParameter>
+    <ReportParameter Name="p_d_data_ate">
+      <DataType>DateTime</DataType>
+      <Prompt>Até a data</Prompt>
+    </ReportParameter>
+    <ReportParameter Name="p_d_saldo_anterior_de">
+      <DataType>DateTime</DataType>
+      <DefaultValue>
+        <Values>
+          <Value>=CDate("2020-01-01")</Value>
+        </Values>
+      </DefaultValue>
+      <Prompt>Saldo Anterior a partir de</Prompt>
+    </ReportParameter>
+    <ReportParameter Name="p_n_grupo">
+      <DataType>Integer</DataType>
+      <Prompt>Grupo Contabil</Prompt>
+      <ValidValues>
+        <DataSetReference>
+          <DataSetName>grupo_contabil_ds</DataSetName>
+          <ValueField>id</ValueField>
+          <LabelField>c_descricao</LabelField>
+        </DataSetReference>
+      </ValidValues>
+      <MultiValue>true</MultiValue>
+    </ReportParameter>
+    <ReportParameter Name="p_n_moeda">
+      <DataType>Integer</DataType>
+      <Prompt>Moeda</Prompt>
+      <ValidValues>
+        <DataSetReference>
+          <DataSetName>moeda_ds</DataSetName>
+          <ValueField>id</ValueField>
+          <LabelField>c_descricao</LabelField>
+        </DataSetReference>
+      </ValidValues>
+      <MultiValue>true</MultiValue>
+    </ReportParameter>
+  </ReportParameters>
+  <ReportParametersLayout>
+    <GridLayoutDefinition>
+      <NumberOfColumns>4</NumberOfColumns>
+      <NumberOfRows>2</NumberOfRows>
+      <CellDefinitions>
+        <CellDefinition>
+          <ColumnIndex>0</ColumnIndex>
+          <RowIndex>0</RowIndex>
+          <ParameterName>p_d_data_de</ParameterName>
+        </CellDefinition>
+        <CellDefinition>
+          <ColumnIndex>1</ColumnIndex>
+          <RowIndex>0</RowIndex>
+          <ParameterName>p_d_data_ate</ParameterName>
+        </CellDefinition>
+        <CellDefinition>
+          <ColumnIndex>2</ColumnIndex>
+          <RowIndex>0</RowIndex>
+          <ParameterName>p_d_saldo_anterior_de</ParameterName>
+        </CellDefinition>
+        <CellDefinition>
+          <ColumnIndex>0</ColumnIndex>
+          <RowIndex>1</RowIndex>
+          <ParameterName>p_n_grupo</ParameterName>
+        </CellDefinition>
+        <CellDefinition>
+          <ColumnIndex>1</ColumnIndex>
+          <RowIndex>1</RowIndex>
+          <ParameterName>p_n_moeda</ParameterName>
+        </CellDefinition>
+      </CellDefinitions>
+    </GridLayoutDefinition>
+  </ReportParametersLayout>
+  <rd:ReportUnitType>Cm</rd:ReportUnitType>
+  <rd:ReportID>712f9502-6572-4ddc-81c2-75095bde1ecb</rd:ReportID>
+</Report>

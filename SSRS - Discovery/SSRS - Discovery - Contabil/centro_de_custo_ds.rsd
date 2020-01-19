@@ -1,0 +1,31 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<SharedDataSet xmlns="http://schemas.microsoft.com/sqlserver/reporting/2010/01/shareddatasetdefinition" xmlns:rd="http://schemas.microsoft.com/SQLServer/reporting/reportdesigner">
+  <DataSet Name="DataSet1">
+    <Query>
+      <DataSourceReference>PROTHEUS</DataSourceReference>
+      <CommandText>select ' ' as c_centro_custo,
+	   '&lt;Sem centro de custo&gt;' as c_descricao,
+	   -1 as id
+UNION
+select c_centro_custo, 
+       rtrim(c_centro_custo) + ' - ' + c_descricao as c_descricao, 
+	   id
+  from bi_ctb_centro_custo_vw
+ order by c_centro_custo</CommandText>
+    </Query>
+    <Fields>
+      <Field Name="c_centro_custo">
+        <DataField>c_centro_custo</DataField>
+        <rd:TypeName>System.String</rd:TypeName>
+      </Field>
+      <Field Name="c_descricao">
+        <DataField>c_descricao</DataField>
+        <rd:TypeName>System.String</rd:TypeName>
+      </Field>
+      <Field Name="id">
+        <DataField>id</DataField>
+        <rd:TypeName>System.Int64</rd:TypeName>
+      </Field>
+    </Fields>
+  </DataSet>
+</SharedDataSet>

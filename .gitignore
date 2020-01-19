@@ -1,0 +1,7 @@
+
+*.data
+*.obj
+/SSRS*Discovery/SSRS*Discovery*Contabil/bin/
+
+
+*.rsuser

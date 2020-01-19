@@ -1,0 +1,37 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<SharedDataSet xmlns="http://schemas.microsoft.com/sqlserver/reporting/2010/01/shareddatasetdefinition" xmlns:rd="http://schemas.microsoft.com/SQLServer/reporting/reportdesigner">
+  <DataSet Name="DataSet1">
+    <Query>
+      <DataSourceReference>PROTHEUS</DataSourceReference>
+      <CommandText>select c_conta_contabil, 
+       rtrim(c_conta_contabil) + ' - ' + c_descricao as c_descricao, 
+	   id, 
+	   n_nivel,
+	   id_conta_superior
+  from bi_ctb_conta_contabil_sint_vw
+ order by c_conta_contabil</CommandText>
+    </Query>
+    <Fields>
+      <Field Name="c_conta_contabil">
+        <DataField>c_conta_contabil</DataField>
+        <rd:TypeName>System.String</rd:TypeName>
+      </Field>
+      <Field Name="c_descricao">
+        <DataField>c_descricao</DataField>
+        <rd:TypeName>System.String</rd:TypeName>
+      </Field>
+      <Field Name="id">
+        <DataField>id</DataField>
+        <rd:TypeName>System.Int64</rd:TypeName>
+      </Field>
+      <Field Name="n_nivel">
+        <DataField>n_nivel</DataField>
+        <rd:TypeName>System.Int32</rd:TypeName>
+      </Field>
+      <Field Name="id_conta_superior">
+        <DataField>id_conta_superior</DataField>
+        <rd:TypeName>System.Int64</rd:TypeName>
+      </Field>
+    </Fields>
+  </DataSet>
+</SharedDataSet>
